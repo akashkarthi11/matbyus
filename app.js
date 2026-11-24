@@ -227,7 +227,7 @@ function go(view, opts = {}) {
     categories: renderAdminCategories, customers: renderAdminCustomers, approvals: renderApprovals,
     more: renderMore, orders: renderOrders, storeorders: renderStoreOrders, permissions: renderPermissions,
     owners: renderOwners, basket: renderBasket, messages: renderMessages, bids: renderBids,
-    notifications: renderNotifications,
+    notifications: renderNotifications, estimate: renderEstimate, aisettings: renderAiSettings,
   }[view] || (() => renderCatalog('material'));
   draw(v);
 }
@@ -454,6 +454,7 @@ async function renderMore(v) {
       { key: 'dashboard', title: 'Dashboard', note: 'Totals for matbyus at a glance' },
       { key: 'storeorders', icon: 'products', title: 'Orders received', note: 'Every order, across every owner' },
       { key: 'owners', icon: 'customers', title: 'Owners', note: 'Who sells here, what they sold, and who is asking to join' },
+      { key: 'aisettings', title: 'AI settings', note: 'Switch AI features on or off, choose models, see the spend' },
     ]));
     const catalogue = moreGroup('CATALOGUE', [
       { key: 'products', title: 'Products', note: 'Add, edit, put live or take offline' },
@@ -494,6 +495,9 @@ async function renderMore(v) {
       hub.append(moreGroup('NEGOTIATION', [
         { key: 'messages', title: 'Messages', note: 'Conversations with sellers' },
         { key: 'bids', title: 'My offers', note: 'What you have offered, and where it stands' },
+      ]));
+      hub.append(moreGroup('PLAN', [
+        { key: 'estimate', title: 'Plan my materials', note: 'Describe your project and get a starting list' },
       ]));
     }
   }
@@ -547,6 +551,37 @@ async function renderCatalog(kind, v = $('view')) {
   const btn = el('button', { type: 'button', className: 'primary', textContent: 'Search' });
   searchbar.append(q, btn);
   v.append(searchbar);
+
+  // AI-2: plain words in, the catalogue's own filters out. The results below are still the normal
+  // catalogue query — real rows at this viewer's price — never a list the model wrote.
+  const aiSlot = el('div');
+  v.append(aiSlot);
+  if (state.aiSearchNote) {
+    aiSlot.append(el('p', { className: 'small ai-note' }, aiBadge(), ' ', state.aiSearchNote));
+    state.aiSearchNote = null;
+  }
+  ensureAi().then(() => {
+    if (!aiOn('smart_search')) return;
+    const toggle = el('button', { type: 'button', className: 'ghost ai-toggle' }, aiBadge(), ' Describe what you need');
+    const row = el('form', { className: 'searchbar', hidden: true });
+    const ask = el('input', { type: 'text', maxLength: 200, placeholder: 'e.g. 12mm saria for a roof slab', 'aria-label': 'Describe what you need' });
+    const find = el('button', { type: 'submit', className: 'primary', textContent: 'Find' });
+    row.append(ask, find);
+    toggle.onclick = () => { row.hidden = !row.hidden; if (!row.hidden) ask.focus(); };
+    row.onsubmit = async e => {
+      e.preventDefault();
+      if (!ask.value.trim()) return;
+      find.disabled = true;
+      try {
+        const d = await api('/api/ai?feature=smart_search', { method: 'POST', body: JSON.stringify({ q: ask.value }) });
+        const target = d.filters.kind || kind;
+        state.filters = { kind: target, category: d.filters.category, q: d.filters.q };
+        state.aiSearchNote = d.explanation;
+        go(target === 'service' ? 'services' : 'materials');
+      } catch (x) { message(row, x.message); find.disabled = false; }
+    };
+    aiSlot.prepend(toggle, row);
+  });
 
   const chips = el('div', { className: 'chips' });
   v.append(chips);
@@ -1374,11 +1409,37 @@ async function openMessageThread(id, opts = {}) {
     if (d.conversation.product) card.append(el('p', { className: 'small muted', textContent: 'About ' + d.conversation.product.name }));
     v.append(card);
 
+    // AI-4: translate a message from the other side, on request. The language remembered is a
+    // per-browser convenience; the server checks the person is part of this conversation.
+    await ensureAi();
+    const canTranslate = aiOn('translate');
+    let langSel = null;
+    if (canTranslate) {
+      langSel = el('select', { 'aria-label': 'Translate into' });
+      let remembered = 'en';
+      try { remembered = localStorage.getItem('mb:lang') || 'en'; } catch {}
+      for (const l of metaRows('language')) langSel.append(el('option', { value: l.code, textContent: l.label, selected: l.code === remembered }));
+      langSel.onchange = () => { try { localStorage.setItem('mb:lang', langSel.value); } catch {} };
+      v.append(el('p', { className: 'small muted' }, aiBadge(), ' Translate messages into ', langSel));
+    }
+
     const thread = el('div', { className: 'thread' });
     for (const m of d.messages) {
-      thread.append(el('div', { className: 'msg-bubble' + (m.mine ? ' mine' : '') },
+      const bubble = el('div', { className: 'msg-bubble' + (m.mine ? ' mine' : '') },
         el('div', { textContent: m.body }),
-        el('div', { className: 'small muted', textContent: m.atLabel })));
+        el('div', { className: 'small muted', textContent: m.atLabel }));
+      if (canTranslate && !m.mine) {
+        const tr = el('button', { type: 'button', className: 'link-btn small', textContent: 'Translate' });
+        tr.onclick = async () => {
+          tr.disabled = true;
+          try {
+            const r = await api('/api/ai?feature=translate', { method: 'POST', body: JSON.stringify({ messageId: m.id, language: langSel.value }) });
+            tr.replaceWith(el('div', { className: 'translation' }, aiBadge(), ' ', r.translation));
+          } catch (x) { banner(x.message, 'bad'); tr.disabled = false; }
+        };
+        bubble.append(tr);
+      }
+      thread.append(bubble);
     }
     v.append(thread);
 
@@ -1566,6 +1627,29 @@ async function openBidDetail(id, opts = {}) {
             } catch (x) { banner(x.message, 'bad'); }
           };
           actions.append(accept, reject, counterPrice, counter);
+
+          // AI-5: advice for the owner whose turn it is. It fills the counter box at most; the owner
+          // still presses the button.
+          if (b.mySide === 'owner' && (await ensureAi(), aiOn('offer_advice'))) {
+            const adviseBtn = el('button', { type: 'button', className: 'ghost' }, aiBadge(), ' Advise me');
+            const adviceOut = el('div', { className: 'ai-panel', hidden: true });
+            adviseBtn.onclick = async () => {
+              adviseBtn.disabled = true;
+              try {
+                const { advice } = await api('/api/ai?feature=offer_advice', { method: 'POST', body: JSON.stringify({ bidId: id }) });
+                const word = { accept: 'Accept', counter: 'Counter', reject: 'Decline' }[advice.recommendation] || advice.recommendation;
+                if (!adviceOut.isConnected) actions.after(adviceOut);
+                adviceOut.hidden = false;
+                adviceOut.textContent = '';
+                adviceOut.append(el('b', { textContent: `Suggested: ${word}${advice.suggestedUnitPriceLabel ? ' at ' + advice.suggestedUnitPriceLabel : ''}` }),
+                  el('p', { className: 'small', textContent: advice.reasoning }),
+                  el('p', { className: 'small muted', textContent: 'A suggestion only — the decision is yours.' }));
+                if (advice.suggestedUnitPrice) counterPrice.value = advice.suggestedUnitPrice;
+              } catch (x) { banner(x.message, 'bad'); }
+              adviseBtn.disabled = false;
+            };
+            actions.append(adviseBtn);
+          }
         } else {
           actions.append(el('p', { className: 'muted small', textContent: `Waiting on ${b.with}.` }));
         }
@@ -1636,6 +1720,194 @@ async function renderNotifications(v) {
       wrap.append(row);
     }
   } catch (x) { message(wrap, x.message); }
+}
+
+// --- AI assistance (FSD Phase 3) ----------------------------------------------------
+// Which features this viewer may use comes from /api/ai?resource=features — the same rows the API
+// enforces — so a button is never drawn for a call that would be refused. Every result is a
+// suggestion the person acts on themselves (C14); nothing here saves anything the model said.
+
+async function ensureAi() {
+  const who = state.user?.id || 'anon';
+  if (state.ai && state.aiFor === who) return state.ai;
+  try { state.ai = await api('/api/ai?resource=features'); }
+  catch { state.ai = { configured: false, features: [] }; }
+  state.aiFor = who;
+  return state.ai;
+}
+const aiOn = feature => !!state.ai?.features?.some(f => f.feature === feature && f.available);
+const aiBadge = () => el('span', { className: 'ai-badge', textContent: 'AI' });
+
+// --- AI-3: plan my materials --------------------------------------------------------
+
+async function renderEstimate(v) {
+  if (!state.user) return go('auth');
+  await ensureAi();
+  v.append(el('h1', {}, 'Plan my materials ', aiBadge()));
+  v.append(el('p', { className: 'muted', textContent:
+    'Describe what you are building. You get a starting list from our catalogue, priced at today\'s rates, '
+    + 'to discuss with a supplier or your engineer.' }));
+  if (!aiOn('estimate')) {
+    v.append(el('p', { className: 'empty', textContent: 'Planning is not available right now. Everything else works as usual.' }));
+    return;
+  }
+
+  const form = el('form', { className: 'card' });
+  const text = el('textarea', {
+    rows: 4, maxLength: 1500, required: true,
+    placeholder: 'e.g. 2BHK ground floor house, about 1,000 sq ft, brick walls, RCC roof, in Chennai',
+  });
+  const go_ = el('button', { type: 'submit', className: 'primary', textContent: 'Plan it' });
+  form.append(el('label', {}, el('span', { textContent: 'Your project' }), text), el('div', { className: 'form-actions' }, go_));
+  const out = el('div');
+  v.append(form, out);
+
+  form.onsubmit = async e => {
+    e.preventDefault();
+    go_.disabled = true;
+    out.textContent = '';
+    out.append(el('p', { className: 'muted', textContent: 'Working it out — this can take up to a minute.' }));
+    try {
+      const d = await api('/api/ai?feature=estimate', { method: 'POST', body: JSON.stringify({ text: text.value }) });
+      out.textContent = '';
+      const card = el('div', { className: 'card detail' });
+      if (d.assumptions.length) {
+        card.append(el('h2', { textContent: 'Assumed' }));
+        card.append(el('ul', {}, ...d.assumptions.map(a => el('li', { textContent: a }))));
+      }
+      card.append(el('h2', { textContent: 'You would need' }));
+      if (!d.lines.length) card.append(el('p', { className: 'empty', textContent: 'Nothing in our catalogue fits this project yet.' }));
+      for (const l of d.lines) {
+        card.append(el('div', { className: 'order-line' },
+          el('div', {},
+            el('b', { textContent: l.name }),
+            el('div', { className: 'small muted', textContent:
+              `${l.qty} ${l.unit}${l.roundedUp ? ' (rounded up to the minimum order)' : ''} — ${l.reason}` })),
+          el('div', { className: 'order-amt', textContent: l.totalLabel || 'Price on request' })));
+      }
+      if (d.lines.some(l => l.total)) {
+        card.append(el('div', { className: 'order-amt', style: 'text-align:right;margin-top:8px',
+          textContent: `About ${d.totalLabel} including GST${d.businessPricing ? ', at your trade price' : ''}` }));
+      }
+      if (d.dropped) card.append(el('p', { className: 'small muted', textContent:
+        `${d.dropped} suggestion${d.dropped === 1 ? ' was' : 's were'} left out because we do not stock ${d.dropped === 1 ? 'it' : 'them'}.` }));
+      if (d.caveats.length) {
+        card.append(el('h2', { textContent: 'Check with your engineer' }));
+        card.append(el('ul', {}, ...d.caveats.map(c => el('li', { textContent: c }))));
+      }
+      card.append(el('p', { className: 'small muted', textContent:
+        'This is an estimate to start a conversation, not an engineer\'s bill of quantities. Prices are today\'s and are confirmed at checkout.' }));
+
+      const buyable = d.lines.filter(l => l.total);
+      if (buyable.length) {
+        const add = el('button', { type: 'button', className: 'primary', textContent: `Add ${buyable.length} item${buyable.length === 1 ? '' : 's'} to basket` });
+        add.onclick = () => {
+          for (const l of buyable) basketAdd(l.slug, l.qty);
+          banner('Added to your basket. Adjust quantities there before checkout.', 'good');
+          go('basket');
+        };
+        card.append(el('div', { className: 'form-actions' }, add));
+      }
+      out.append(card);
+    } catch (x) { out.textContent = ''; message(out, x.message); }
+    go_.disabled = false;
+  };
+}
+
+// --- AI-6: settings ------------------------------------------------------------------
+
+async function renderAiSettings(v) {
+  if (!adminGuard()) return;
+  v.append(el('h1', {}, 'AI settings ', aiBadge()));
+  v.append(el('p', { className: 'muted small', textContent:
+    'Every AI feature reads these on each call, so a change takes effect at once. The model only ever suggests: '
+    + 'nothing it says is saved as a listing, order, offer or message without a person pressing a button.' }));
+  const wrap = el('div');
+  v.append(wrap);
+
+  const load = async () => {
+    wrap.textContent = 'Loading…';
+    let d;
+    try { d = await api('/api/ai?resource=settings'); }
+    catch (x) { wrap.textContent = ''; message(wrap, x.message); return; }
+    wrap.textContent = '';
+    if (!d.configured) {
+      wrap.append(el('div', { className: 'msg err', textContent:
+        'ANTHROPIC_API_KEY is not set on this deployment, so every feature is off. Add it in the Vercel project\'s '
+        + 'environment variables and redeploy; nothing else needs to change.' }));
+    }
+
+    for (const f of d.features) {
+      const card = el('div', { className: 'card ai-feature' });
+      const enabled = el('input', { type: 'checkbox', checked: f.enabled });
+      card.append(el('div', { className: 'admin-head' },
+        el('h2', { textContent: f.label }),
+        el('label', { className: 'perm-item', style: 'min-height:0;padding:0;background:none' }, enabled, el('span', { textContent: 'On' }))));
+      card.append(el('p', { className: 'small muted', textContent:
+        `${f.description} Who: ${f.allowedRoles.join(', ')}${f.allowVisitors ? ', signed-out visitors' : ''}.` }));
+
+      const sel = (rows, current) => {
+        const s = el('select');
+        for (const r of rows) s.append(el('option', { value: r.code, textContent: r.label, selected: r.code === current }));
+        return s;
+      };
+      const model = sel(d.models, f.model);
+      const effort = sel(d.efforts, f.effort);
+      const maxTokens = el('input', { type: 'number', min: '1024', max: '64000', step: '1', value: String(f.maxTokens) });
+      const perUser = el('input', { type: 'number', min: '1', step: '1', value: f.dailyLimitPerUser ?? '', placeholder: 'No limit' });
+      const total = el('input', { type: 'number', min: '1', step: '1', value: f.dailyLimitTotal ?? '', placeholder: 'No limit' });
+      const prompt_ = el('textarea', { rows: 8, value: f.systemPrompt });
+      const lab = (t, n) => el('label', {}, el('span', { textContent: t }), n);
+      card.append(el('div', { className: 'form-grid' },
+        lab('Model', model), lab('Effort', effort), lab('Max tokens per answer', maxTokens),
+        lab('Per person, per 24 hours', perUser), lab('Across matbyus, per 24 hours', total)));
+      card.append(el('label', { className: 'full' }, el('span', { textContent: 'Instructions given to the model' }), prompt_));
+
+      const save = el('button', { type: 'button', className: 'primary', textContent: 'Save' });
+      save.onclick = async () => {
+        save.disabled = true;
+        try {
+          await api('/api/ai?resource=settings&action=save', {
+            method: 'POST',
+            body: JSON.stringify({
+              feature: f.feature, enabled: enabled.checked, model: model.value, effort: effort.value,
+              maxTokens: Number(maxTokens.value), dailyLimitPerUser: perUser.value === '' ? null : Number(perUser.value),
+              dailyLimitTotal: total.value === '' ? null : Number(total.value), systemPrompt: prompt_.value,
+            }),
+          });
+          state.ai = null;   // the features list this admin sees may have changed
+          banner(`${f.label} saved.`, 'good');
+        } catch (x) { banner(x.message, 'bad'); }
+        save.disabled = false;
+      };
+      card.append(el('div', { className: 'form-actions' }, save));
+      wrap.append(card);
+    }
+
+    const usage = el('section', { className: 'card' });
+    usage.append(el('h2', { textContent: 'Use in the last 7 days' }));
+    if (!d.usage.length) {
+      usage.append(el('p', { className: 'empty', textContent: 'No calls yet.' }));
+    } else {
+      const t = el('table');
+      t.append(el('thead', {}, el('tr', {}, ...['Feature', 'Model', 'Calls', 'Refused', 'Failed', 'Tokens in', 'Tokens out', 'From cache', 'About (USD)']
+        .map(h => el('th', { textContent: h })))));
+      const tb = el('tbody');
+      const label = k => d.features.find(f => f.feature === k)?.label || k;
+      for (const u of d.usage) {
+        tb.append(el('tr', {}, ...[label(u.feature), u.model, u.calls, u.refused, u.failed,
+          u.input_tokens.toLocaleString('en-IN'), u.output_tokens.toLocaleString('en-IN'),
+          u.cache_read_tokens.toLocaleString('en-IN'), u.estimatedUsd == null ? '—' : '$' + u.estimatedUsd.toFixed(2)]
+          .map(x => el('td', { textContent: String(x) }))));
+      }
+      t.append(tb);
+      usage.append(el('div', { className: 'table-wrap' }, t));
+      usage.append(el('p', { className: 'small muted', textContent:
+        'An estimate from each model\'s listed price, not a bill. Only counts and tokens are kept — never what was asked or answered.' }));
+    }
+    wrap.append(usage);
+  };
+  load();
 }
 
 // --- admin ------------------------------------------------------------------
@@ -1921,6 +2193,19 @@ function productForm(v, existing, categories, onDone) {
   const editing = !!existing;
   const card = el('div', { className: 'card' });
   card.append(el('h1', { textContent: editing ? `Edit ${existing.name}` : 'Add a product' }));
+
+  // AI-1: describe it in plain words and the form fills itself — as a draft. Nothing is saved until
+  // the person checks it and presses Save, and every rule the form enforces still applies.
+  const aiPanel = el('div', { className: 'ai-panel', hidden: true });
+  const aiText = el('textarea', { rows: 3, maxLength: 2000,
+    placeholder: 'Describe it the way you would to a customer — e.g. Ultratech OPC 53 cement, 50 kg bag, 420 rupees, minimum 10 bags' });
+  const aiGo = el('button', { type: 'button', className: 'primary', textContent: 'Fill the form' });
+  const aiNotes = el('div');
+  aiPanel.append(el('b', {}, aiBadge(), ' Describe it, and we will draft the listing'), aiText,
+    el('div', { className: 'form-actions' }, aiGo), aiNotes);
+  card.append(aiPanel);
+  if (!editing) ensureAi().then(() => { aiPanel.hidden = !aiOn('listing_draft'); });
+
   const form = el('form');
   card.append(form);
   v.append(card);
@@ -1954,7 +2239,7 @@ function productForm(v, existing, categories, onDone) {
   inputs.unit = unitSel;
 
   const modeSel = el('select', { id: 'p_pricing_mode', name: 'pricing_mode' });
-  for (const [k, lbl] of [['fixed', 'Fixed price'], ['quote', 'Quote on request']]) {
+  for (const { code: k, label: lbl } of metaRows('pricing_mode')) {
     modeSel.append(el('option', { value: k, textContent: lbl, selected: val('pricing_mode') === k }));
   }
   inputs.pricing_mode = modeSel;
@@ -2065,6 +2350,30 @@ function productForm(v, existing, categories, onDone) {
 
   kindSel.onchange = refresh;
   modeSel.onchange = refresh;
+
+  aiGo.onclick = async () => {
+    if (!aiText.value.trim()) return;
+    aiGo.disabled = true;
+    aiNotes.textContent = '';
+    aiNotes.append(el('p', { className: 'small muted', textContent: 'Drafting…' }));
+    try {
+      const { draft, notes } = await api('/api/ai?feature=listing_draft', { method: 'POST', body: JSON.stringify({ text: aiText.value }) });
+      // Kind first: it decides which categories and units the selects offer.
+      kindSel.value = draft.kind;
+      modeSel.value = draft.pricing_mode;
+      refresh();
+      if (draft.category_id) catSel.value = draft.category_id;
+      if (draft.unit) unitSel.value = draft.unit;
+      for (const k of ['name', 'slug', 'summary', 'description', 'pack_size', 'price_retail', 'hsn_sac', 'gst_rate']) {
+        if (draft[k] != null && inputs[k] && !inputs[k].disabled) inputs[k].value = draft[k];
+      }
+      refresh();
+      aiNotes.textContent = '';
+      aiNotes.append(el('p', { className: 'small', textContent: 'Draft filled in below. Check every field, add the SKU, and save when it is right.' }));
+      if (notes.length) aiNotes.append(el('ul', { className: 'small' }, ...notes.map(n => el('li', { textContent: n }))));
+    } catch (x) { aiNotes.textContent = ''; message(aiNotes, x.message); }
+    aiGo.disabled = false;
+  };
   for (const k of ['price_retail', 'price_business', 'gst_rate']) inputs[k].oninput = refresh;
 
   // a slug is a chore to type, so derive it until the admin edits it themselves
@@ -2470,7 +2779,7 @@ async function renderAdminCategories(v) {
 
 const KNOWN_VIEWS = ['materials', 'services', 'account', 'auth', 'more', 'orders', 'storeorders', 'permissions',
   'dashboard', 'products', 'categories', 'customers', 'approvals', 'owners',
-  'basket', 'messages', 'bids', 'notifications'];
+  'basket', 'messages', 'bids', 'notifications', 'estimate', 'aisettings'];
 
 // Returns whether the hash named a screen. go() and openProduct() return nothing, so this must
 // report the match itself rather than pass their result on — doing that made every route look like
@@ -2533,6 +2842,7 @@ window.addEventListener('popstate', () => {
 
   state.basket = loadBasket();
   if (state.user) await refreshNotifications();
+  ensureAi();   // not awaited: the first screen draws, and AI buttons join when this answers
 
   // A shared or reloaded URL opens the screen it names, not the front page.
   if (!routeFromHash(true)) {

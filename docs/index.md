@@ -7,7 +7,7 @@ buyers** (contractors, builders, dealers) **and individual buyers** (homeowners,
 It is built for India: prices in INR with Indian digit grouping, GST with HSN and SAC codes, GSTIN
 and PAN on business accounts, Indian addresses and mobile numbers, IST, and a mobile-first layout.
 
-Live at **https://matbyus.vercel.app** · 187 tests passing · last updated 2026-11-24.
+Live at **https://matbyus.vercel.app** · 211 tests passing · last updated 2026-11-24.
 
 | Document | What it covers | Status |
 |---|---|---|
@@ -15,6 +15,8 @@ Live at **https://matbyus.vercel.app** · 187 tests passing · last updated 2026
 | [Reference data lives in the database](lookups.md) | Roles, menus, units, states and the order status machine as tables, not constants | v1.0 — **built and live** |
 | [The QR handover](handover.md) | The code a customer scans to confirm collection, and why it is not the order reference | v1.0 — **built and live** |
 | [Messages, bids, basket and notifications](marketplace.md) | The rest of Phase 2: negotiation, a basket spanning owners, and in-app notifications | v1.0 — **built and live** |
+| [FSD — Phase 3: AI assistance](FSD-phase-3-ai.md) | Draft a listing, search in plain words, plan materials, translate a message, advise on an offer | v1.0 — **built; live once `ANTHROPIC_API_KEY` is set** |
+| [TSD — Phase 3: AI assistance](TSD-phase-3-ai.md) | One door to the model, schemas from the database, limits, usage without content | v1.0 — **built** |
 | [FSD — Phase 1: accounts and catalog](FSD-phase-1-accounts-and-catalog.md) | Accounts, roles, catalogue, GST pricing, theme | v1.1 — **built and live** |
 | [TSD — Phase 1: accounts and catalog](TSD-phase-1-accounts-and-catalog.md) | Schema, APIs, session design, GST handling, theme | v1.1 — **built and live** |
 | [FSD — Phase 2: marketplace](FSD-phase-2-marketplace.md) | Many owners, negotiation and bids, messages, orders, QR handover, platform reporting | Draft v1.0 — **partly built**, see below |

@@ -480,3 +480,32 @@ body { padding-bottom: calc(62px + env(safe-area-inset-bottom, 0)); }
 .msg-bubble.mine .muted { color: #3a2c00; }
 .msg-compose { display: flex; gap: 8px; align-items: flex-end; }
 .msg-compose textarea { flex: 1; resize: vertical; min-height: 44px; }
+
+/* --- AI assistance (FSD Phase 3) ---------------------------------------------
+   Everything the model produced wears the same small badge, so a person can always tell a
+   suggestion from a fact the server computed — a price, a stock level, an order total. */
+
+.ai-badge {
+  display: inline-block; padding: 1px 6px; border-radius: 999px; vertical-align: middle;
+  background: var(--mb-yellow); color: var(--mb-on-yellow);
+  font-size: .66rem; font-weight: 800; letter-spacing: .06em; line-height: 1.5;
+}
+.ai-panel {
+  display: grid; gap: 8px; margin: 10px 0 14px; padding: 12px 14px;
+  border: 1px dashed var(--mb-yellow-dim); border-radius: var(--radius-sm); background: var(--mb-surface);
+}
+.ai-panel textarea { width: 100%; }
+.ai-panel ul { margin: 0; padding-left: 18px; }
+.ai-toggle { margin: 0 0 8px; }
+.ai-note { color: var(--mb-text-muted); margin: 0 0 10px; }
+.translation {
+  margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--mb-border-soft);
+  font-size: .92rem;
+}
+.msg-bubble.mine .translation { border-top-color: rgba(0, 0, 0, .2); }
+.link-btn {
+  background: none; border: 0; padding: 0; margin-top: 4px; min-height: 0;
+  color: var(--mb-yellow); text-decoration: underline; cursor: pointer; font: inherit;
+}
+.link-btn.small { font-size: .8rem; }
+.ai-feature textarea { width: 100%; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .82rem; }

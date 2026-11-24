@@ -1,7 +1,8 @@
 {
   "git": { "deploymentEnabled": { "main": false } },
   "functions": {
-    "api/*.js": { "maxDuration": 15 }
+    "api/*.js": { "maxDuration": 15 },
+    "api/ai/*.js": { "maxDuration": 60 }
   },
   "headers": [
     {

@@ -11,6 +11,8 @@ export default async function handler(req, res) {
     MB_SESSION_SECRET: secret.trim().length >= 32,
     MB_SELLER_STATE_CODE: !!process.env.MB_SELLER_STATE_CODE,
     MB_SELLER_GSTIN: !!process.env.MB_SELLER_GSTIN,
+    // Optional: without it the AI features are off and every other path runs (FSD Phase 3 NFR-33).
+    ANTHROPIC_API_KEY: !!process.env.ANTHROPIC_API_KEY || !!process.env.ANTHROPIC_AUTH_TOKEN,
   };
   const required = ['DATABASE_URL', 'MB_SESSION_SECRET'];
   const missing = Object.entries(settings).filter(([, ok]) => !ok).map(([k]) => k);
@@ -38,7 +40,7 @@ export default async function handler(req, res) {
     note: blocking.length
       ? 'The storefront cannot run until the blocking settings are present.'
       : missing.length
-        ? 'Running. The settings listed are optional until invoicing (Phase 2).'
+        ? 'Running. The settings listed are optional: seller settings until invoicing, ANTHROPIC_API_KEY for the AI features.'
         : 'All settings present.',
   });
 }

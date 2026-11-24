@@ -106,7 +106,12 @@ function build({ roles, menuRows, units, states, statuses, transitions, bidStatu
   const alwaysOn = {};
   for (const code of roleCodes) { menus[code] = []; alwaysOn[code] = []; }
   for (const m of menuRows) {
-    (menus[m.role] ||= []).push({ key: m.key, label: m.label, icon: m.icon || m.key });
+    (menus[m.role] ||= []).push({
+      key: m.key, label: m.label, icon: m.icon || m.key,
+      // When this menu appeared (migration 0012, D-35) — how menusForRole() tells a menu an admin
+      // hid on purpose from one that did not exist when they last saved.
+      createdAt: m.created_at || null,
+    });
     if (m.always_on) (alwaysOn[m.role] ||= []).push(m.key);
   }
 

@@ -22,23 +22,32 @@ import { lookups } from './_lookups.js';
 // The menus a role sees: the catalogue from mb_menus, narrowed by whatever an admin saved in
 // mb_role_menus. The saved choice is read live rather than through the lookup cache, because an
 // admin who switches a menu off expects it gone on the next load, not within the minute.
+// What a menu looks like to the browser: the catalogue row minus the bookkeeping.
+const forClient = m => ({ key: m.key, label: m.label, icon: m.icon });
+
+// D-35: a saved choice covers the menus that existed when it was saved. A menu added since then was
+// never something the admin chose to hide, so it shows until they next save — otherwise every new
+// screen silently vanished for any role that had ever been tailored.
+const visibleUnder = (saved, alwaysOn) => m =>
+  saved.menus.includes(m.key) || alwaysOn.includes(m.key)
+  || (m.createdAt && saved.updated_at && new Date(m.createdAt) > new Date(saved.updated_at));
+
 export async function menusForRole(role, db) {
   const lk = await lookups(db);
   const all = lk.menus[role] || [];
   if (!all.length) return [];
-  if (!lk.isConfigurable(role)) return all;
+  if (!lk.isConfigurable(role)) return all.map(forClient);
   let saved = null;
   try {
-    [saved] = await db.query('SELECT menus FROM mb_role_menus WHERE role = $1', [role]);
+    [saved] = await db.query('SELECT menus, updated_at FROM mb_role_menus WHERE role = $1', [role]);
   } catch {
     // The override table may be absent on a part-migrated deployment. The catalogue is the safe
     // answer: the APIs still refuse whatever the caller may not do.
-    return all;
+    return all.map(forClient);
   }
-  if (!saved) return all;
-  const keep = new Set([...(saved.menus || []), ...(lk.alwaysOn[role] || [])]);
-  const chosen = all.filter(m => keep.has(m.key));
-  return chosen.length ? chosen : all;
+  if (!saved) return all.map(forClient);
+  const chosen = all.filter(visibleUnder({ ...saved, menus: saved.menus || [] }, lk.alwaysOn[role] || []));
+  return (chosen.length ? chosen : all).map(forClient);
 }
 
 export async function roleMenuOverview(db) {
@@ -51,7 +60,7 @@ export async function roleMenuOverview(db) {
     roles: lk.roles.map(r => {
       const all = lk.menus[r.code] || [];
       const on = lk.isConfigurable(r.code) && saved(r.code)
-        ? all.filter(m => saved(r.code).menus.includes(m.key) || (lk.alwaysOn[r.code] || []).includes(m.key))
+        ? all.filter(visibleUnder(saved(r.code), lk.alwaysOn[r.code] || []))
         : all;
       return {
         role: r.code,
@@ -60,7 +69,7 @@ export async function roleMenuOverview(db) {
         users: count(r.code),
         locked: !r.is_configurable,
         alwaysOn: lk.alwaysOn[r.code] || [],
-        all,
+        all: all.map(forClient),
         menus: on.map(m => m.key),
         updatedAt: saved(r.code)?.updated_at || null,
       };
