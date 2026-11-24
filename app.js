@@ -1302,11 +1302,20 @@ function formatInrLike(paiseOrRupees) {
 
 // --- messages (FR-23) ----------------------------------------------------------
 
-async function startConversation(slug) {
-  try {
-    const d = await api('/api/messages?action=start', { method: 'POST', body: JSON.stringify({ slug }) });
-    openMessageThread(d.conversation.id);
-  } catch (x) { banner(x.message, 'bad'); }
+// Person to person, not person to platform: this always opens the one thread between the signed-in
+// customer and the specific owner who lists `slug` (FR-23.2 — api/messages.js finds or creates it),
+// never a general "contact matbyus" box. Signed out, it asks for a sign-in and comes straight back
+// here, the same resume pattern Buy and "Ask for a better price" already use.
+function startConversation(slug) {
+  if (!state.user) {
+    rememberNext('#/message/' + slug);
+    go('auth');
+    banner('Sign in to message the seller — we will bring you straight back.');
+    return;
+  }
+  api('/api/messages?action=start', { method: 'POST', body: JSON.stringify({ slug }) })
+    .then(d => openMessageThread(d.conversation.id))
+    .catch(x => banner(x.message, 'bad'));
 }
 
 async function renderMessages(v) {
@@ -2480,6 +2489,10 @@ function routeFromHash(fromHistory) {
   }
   if (raw.startsWith('messages/') && raw.length > 9) {
     openMessageThread(raw.slice(9), { fromHistory });
+    return true;
+  }
+  if (raw.startsWith('message/') && raw.length > 8) {
+    startConversation(raw.slice(8));
     return true;
   }
   if (!KNOWN_VIEWS.includes(raw)) return false;
