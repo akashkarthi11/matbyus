@@ -1,0 +1,14 @@
+{
+  "git": { "deploymentEnabled": { "main": false } },
+  "functions": {
+    "api/*.js": { "maxDuration": 15 }
+  },
+  "headers": [
+    {
+      "source": "/api/(.*)",
+      "headers": [
+        { "key": "X-Content-Type-Options", "value": "nosniff" }
+      ]
+    }
+  ]
+}
