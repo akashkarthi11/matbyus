@@ -440,6 +440,10 @@ async function renderMore(v) {
       { key: 'products', title: 'My listings', note: 'Add, price, put live or take offline' },
       { key: 'dashboard', title: 'My sales', note: 'Your listings and your orders at a glance' },
     ]));
+    hub.append(moreGroup('NEGOTIATION', [
+      { key: 'messages', title: 'Messages', note: 'Conversations with customers' },
+      { key: 'bids', title: 'Offers', note: 'Counter, accept or decline an offer' },
+    ]));
     hub.append(moreGroup('SHOP', [
       { key: 'materials', title: 'Construction materials', note: 'See the catalogue as a customer does' },
       { key: 'services', title: 'Site services', note: 'Plastering, masonry and contracting' },
@@ -486,6 +490,12 @@ async function renderMore(v) {
       { key: 'materials', title: 'Construction materials', note: 'Cement, steel, sand, bricks, finishes' },
       { key: 'services', title: 'Site services', note: 'Plastering, masonry and contracting' },
     ]));
+    if (state.user?.role === 'customer') {
+      hub.append(moreGroup('NEGOTIATION', [
+        { key: 'messages', title: 'Messages', note: 'Conversations with sellers' },
+        { key: 'bids', title: 'My offers', note: 'What you have offered, and where it stands' },
+      ]));
+    }
   }
 
   const account = [];
